@@ -1,0 +1,1 @@
+g++ src/main.cpp src/lexer/lexer.cpp -I"C:/dev/C_C++/DebuggerAssets" -o "build/tokenizer.exe"
