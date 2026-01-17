@@ -1,6 +1,8 @@
 #include <lexer/lexer.hpp>
 #include <string>
 
+#include <array>
+
 /*
 As a clarification here, the number parser here will be dumb and no number
 validation will be performed here. It will be done at an AST level, because the number type might here be actually inside 
@@ -8,29 +10,73 @@ of a string or a comment and this makes the error irrelevant
 */
 
 namespace Util { 
- bool is_numeric_char(char numeric_char)
+ 
+ inline bool is_numeric_char(char numeric_char)
  {
     return numeric_char >= '0' && numeric_char <= '9';
  };
- bool is_letter_char(char letter_char)
+ 
+ inline bool is_letter_char(char letter_char)
  {
-    return (letter_char >= 'A' && letter_char <= 'Z') || (letter_char >= 'a' && letter_char <= 'z') || letter_char == '_';
+    return (letter_char >= 'A' && letter_char <= 'Z') || (letter_char >= 'a' && letter_char <= 'z');
  };
 
- bool is_special_char(char special_char)
+ inline bool is_special_char(char special_char)
  {
-    return ((special_char >= '!' && special_char <= '~') && !is_numeric_char(special_char) && !is_letter_char(special_char)) && special_char != '_' || special_char == '\n';
+    return ((special_char >= '!' && special_char <= '~') && !is_numeric_char(special_char) && !is_letter_char(special_char));
  };
 
- bool is_whitespace_char(char whitespace_char)
+ inline bool is_whitespace_char(char whitespace_char)
  {
-    return whitespace_char == ' ' || whitespace_char == '\t';
+    return whitespace_char == ' ' || whitespace_char == '\t' || whitespace_char == '\r' || whitespace_char == '\n';
  };
 
- bool is_valid_char(char unknown_char)
+ inline bool is_valid_char(char unknown_char)
  {
-    return (unknown_char > ' ' && unknown_char < '~') || unknown_char == '\0';
+    return (unknown_char >= ' ' && unknown_char <= '~') || is_whitespace_char(unknown_char) || unknown_char == '\0';
  };
+
+ enum class CharacterType : uint8_t {
+   Error,
+   Letter,
+   Numeric,
+   Whitespace,
+   EndOfFile,
+   Symbol, //synonymous to special character
+ };
+
+ consteval auto character_map = [](){
+   std::array<CharacterType,256> character_map;
+
+   for (size_t current_character = 0;current_character <= 255;current_character++)
+   {
+      if(!is_valid_char(current_character))
+      {
+         character_map[current_character] = CharacterType::Error;
+         continue;
+      }
+      else if (is_numeric_char(current_character))
+      {
+         character_map[current_character] = CharacterType::Numeric;
+         continue;
+      }
+      else if (is_letter_char(current_character))
+      {
+         character_map[current_character] = CharacterType::Letter;      
+         continue;
+      }
+      else if (is_whitespace_char(current_character))
+      {
+         character_map[current_character] = CharacterType::Whitespace;
+         continue;
+      }
+      character_map[current_character] = CharacterType::Symbol;
+   };
+
+   character_map['\0'] = CharacterType::EndOfFile;
+
+   return character_map;
+ }();
 
  char to_lower_case(char ascii_char)
  {
@@ -41,309 +87,110 @@ namespace Util {
     }
     return ascii_char;
  };
-
- Token parse_special_token(Source& source)
+ 
+ TokenType get_token_type(LexerContext& lexer_context)
  {
-    /*
-        This case is simple because all special token types must be 1 character long, otherwise they are identifiers or errors
-    */ 
-   Assert(
-    source.can_consume_sentinel(),
-    LexerError 
-    "Unexpected behaviour. Can't read special characters outside of the bounds of "
-    LexerErrorEnd
-   )
-   
-   Token token;
-   token.token_type = TokenType::SpecialChar;
-  
-   if (!is_special_char(source.see_current()))
+   auto current_char = static_cast<unsigned char>(lexer_context.source.see_current());
+   auto character_type = character_map[current_char];
+
+   switch (character_type)
    {
-    token.token_type = TokenType::Error;  
+      case CharacterType::Error:
+        return TokenType::Error;
+      case CharacterType::Letter:
+         return TokenType::Identifier;
+      case CharacterType::Numeric:
+         return TokenType::Numeric;
+      case CharacterType::Symbol:
+         return TokenType::SpecialChar;
+      case CharacterType::Whitespace:
+         return TokenType::Whitespace;
+      case CharacterType::EndOfFile:
+         return TokenType::EndOfFile;
+      default:
+        return TokenType::Error;
    };
 
-   source.consume();
+   return TokenType::Error;
  };
 
- Token parse_identifier_token(Source& source)
+ void consume_eof_token(LexerContext& lexer_context)
  {
-    
+   Assert(
+      lexer_context.source.see_current() == '\0',
+      LexerError
+      "Undefined behaviour: No EOF Token when expected one."
+      LexerErrorEnd
+   )
+   lexer_context.source.consume();
  };
 
- void consume_numbers(Source& source)
+ void consume_error_token(LexerContext& lexer_context)
  {
-    auto current_char = source.see_current();
-    while (is_numeric_char(current_char)) 
-    {
-        source.consume();
-        current_char = source.see_current();
-    }; 
+   lexer_context.emit_error(ErrorCode::UnexpectedCharacter); //potentially I could add a message, but it can be derived from token of error type and displayed for the user
+   lexer_context.source.consume(); 
  };
 
- void consume_until_scientific_notation_end(Source& source)
+ void consume_identifier_token(LexerContext& lexer_context)
  {
-    Assert(
-        source.can_consume_sentinel(),
-        LexerError
-        "Unexpected behaviour: Expression has "
-        LexerErrorEnd
-    )
-    /*
-        should give an error about malformed number I guess or return early really and the AST builder should detect malformed number
-        but in debug mode it should be enabled nevertheless I guess so
-    */
-    if (!source.can_consume_sentinel())
-    {
-        return;
-    };
 
-    Assert(to_lower_case(source.see_current()) == 'e',
-        LexerError
-        "Unexpected behaviour: "
-        LexerErrorEnd
-    )
-
-    if (to_lower_case(source.see_current()) != 'e')
-    {
-        return;
-    };
-
-    source.consume(); 
-    auto current_char = source.see_current();  
-
-    if (current_char == '-' || current_char == '+')
-    {
-        source.consume();
-    };
-
-    if (is_numeric_char(current_char))
-    {
-        consume_numbers(source);
-    };
  };
 
- void parse_number_hex_format(Source& source)
+ void consume_numeric_token(LexerContext& lexer_context)
  {
-    AssertEq(source.see_current(),'0');
-    source.consume(); //0
-    AssertEq(to_lower_case(source.see_current()),'x');
-    source.consume(); //x
-    consume_numbers(source);
+
  };
 
- void parse_number_bin_format(Source& source)
+ void consume_special_token(LexerContext& lexer_context)
  {
-    AssertEq(source.see_current(),'0');
-    source.consume(); //0
-    AssertEq(to_lower_case(source.see_current()),'b');
-    source.consume(); //b
-    consume_numbers(source);
+
  };
 
- void parse_fractions(Source& source)
+ void consume_whitespace_token(LexerContext& lexer_context)
  {
-    //technically 1.235e is a valid number here but AST should be validating not lexer
-    size_t start = source.index;
-    source.consume();
-    consume_numbers(source); 
 
-    auto current_char = source.see_current();
-
-    if (to_lower_case(current_char) == 'e')
-    {
-        consume_until_scientific_notation_end(source);
-    };
- };
-
- bool parse_number_normal(Source& source)
- {
-    bool is_valid = consume_numbers(source);
-
-    if (!is_valid)
-    {
-        return false;
-    };
-
-    auto current_char = source.see_current();
-
-    if (to_lower_case(current_char) == 'e')
-    {
-        return consume_until_scientific_notation_end(source);
-    }
-    else if (current_char == '.')
-    {
-        return parse_fractions(source);
-    };
-
-    return false;
- };
-
- Token parse_number_token(Source& source)
- {
-    size_t start = source.index;
-    Token token;
-    token.token_type = TokenType::Numeric;
-
-    /*First determine initial format and then load that number according to the format*/
-    auto current_char = source.see_current();
-
-    if (current_char == '0' && source.can_peek())
-    {
-        auto next_char = to_lower_case(source.peek());
-        if (next_char == 'x')
-        {
-            parse_number_hex_format(source);
-        } else if (next_char == 'b')
-        {
-            parse_number_bin_format(source);
-        };
-    } else if (current_char == '.')
-    {
-        parse_fractions(source);
-    } else if (is_numeric_char(current_char)){
-        parse_number_normal(source);
-    } else{
-        Assert(false,
-            LexerError
-            "Unexpected Behaviour: Number type was given, but the parsing function couldn't confirm that."
-            LexerErrorEnd
-        );
-    };
-
-    return token;
- };
-
- Token parse_eof_token(Source& source)
- {
-    Assert(
-        source.see_current() == '\0',
-        LexerError
-        "EOF Token Not Found"
-        LexerErrorEnd
-    )
-
-    Token token;
-    token.token_type = TokenType::EndOfFile;
-
-    return token;
- };
-
- Token parse_whitespace_token(Source& source)
- {
-    Token token;
-    token.token_type = TokenType::Whitespace;
-    auto current_char = source.see_current();
-    while (is_whitespace_char(current_char))
-    {
-        token.length++;
-        source.consume();
-    };  
-
-    return token;
- };
-
- Token parse_error_token(Source& source)
- {
-    Assert(
-        !source.can_consume_sentinel(),
-        LexerError 
-        "Attempting to read outside of bounds of the source"
-        LexerErrorEnd
-    )
-
-    Token token;
-    token.token_type = TokenType::Error;
-
-    return token;
- };
-
- TokenType guess_token_type(Source& source)
- {
-    auto current_char = source.see_current();
-
-    if (!is_valid_char(current_char))
-    {
-        return TokenType::Error;
-    };
-
-    if (current_char == '\0')
-    {
-        return TokenType::EndOfFile;
-    };
-
-    if (current_char == '.')
-    {
-        if (!source.can_peek())
-        {
-            return TokenType::SpecialChar;
-        };
-        
-        auto next_token = source.peek(); 
-        if (is_numeric_char(next_token))
-        {
-            return TokenType::Numeric;
-        };
-    };
-
-    if (is_special_char(current_char))
-    {
-        return TokenType::SpecialChar;
-    }
-    else if (is_numeric_char(current_char))
-    {
-        return TokenType::Numeric;
-    } else if(is_letter_char(current_char))
-    {
-        return TokenType::Identifier;
-    } else if (is_whitespace_char(current_char))
-    {
-        return TokenType::Whitespace;
-    };
-
-    return TokenType::Error;
  };
 
  Token Lexer::get_next_token()
  {
-  auto token_type = guess_token_type(source);
-  Token current_token;
-  size_t start = source.index;
+   auto token_type = get_token_type(lexer_context);
+   size_t start = lexer_context.source.index;
 
-  switch (token_type)
-  {
-  case TokenType::SpecialChar:
-    current_token = parse_special_token(source);
-    break;
-  case TokenType::Identifier:
-    current_token = parse_identifier_token(source);
-    break;
-  case TokenType::Numeric:
-    current_token = parse_number_token(source);
-    break;
-  case TokenType::Whitespace:
-    current_token = parse_whitespace_token(source);
-    break;
-  case TokenType::EndOfFile:
-    current_token = parse_eof_token(source);
-    break;
-  default:
-    current_token = parse_error_token(source);
-  };
+   switch (token_type)
+   {
+   case TokenType::EndOfFile:
+      consume_eof_token(lexer_context);
+      break;
+   case TokenType::Error:
+      consume_error_token(lexer_context);
+      break;
+   case TokenType::Identifier:
+      consume_identifier_token(lexer_context);
+      break;
+   case TokenType::Numeric:
+      consume_numeric_token(lexer_context);
+      break;
+   case TokenType::SpecialChar:
+      consume_special_token(lexer_context);
+      break;
+   case TokenType::Whitespace:
+      consume_whitespace_token(lexer_context);
+      break;
+   default:
+      consume_error_token(lexer_context);
+      break;
+   }
 
-  if (current_token.token_type == TokenType::Error)
-  {
-    //emit_error(ErrorCode::UnexpectedCharacter); would make sense if there were more non-critical error codes than 1 (UnexpectedCharacter)
-  }
+   size_t end = lexer_context.source.index;
+   size_t length = end - start;
+   Token token;
+   token.token_type = token_type;
+   token.offset = start;
+   token.length = length;
 
-  size_t end = source.index;
-  size_t length = end - start;
-
-  current_token.offset = start;
-  current_token.length = length;
-
-  return current_token;
+   return token;
  };
-};
+}
 
 #undef LexerError
 #undef LexerErrorEnd

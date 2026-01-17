@@ -9,6 +9,7 @@
 namespace Util {
 
     enum class ErrorCode {
+        None,
         UnexpectedCharacter
     };
 
@@ -31,7 +32,7 @@ namespace Util {
         public:
         
         Source() = default;
-        Source(char* source_buffer, size_t source_size) : source_buffer(source_buffer), source_size(source_size)
+        Source(char* source_buffer, size_t source_size) : source_buffer(source_buffer), source_size(source_size), index(0)
         {
             Assert(source_buffer,
                 LexerError 
@@ -115,11 +116,14 @@ namespace Util {
         ErrorCode error_code;
     };
     
-    class Lexer {
-        Source source;
+    class LexerContext {
         public:
-        std::vector<Token> tokens;
+        Source source;
         std::vector<Error> errors;
+
+        LexerContext() = default;
+        LexerContext(Source& source): source(source)
+        {};
 
         void emit_error(ErrorCode error_code)
         {
@@ -127,6 +131,23 @@ namespace Util {
             error.error_code = error_code;
             error.offset = source.index;
             errors.push_back(error);
+        };
+    };
+
+    class Lexer
+    {
+        private:
+        LexerContext lexer_context;
+        void emit_token(Token token)
+        {
+            tokens.push_back(token);
+        };
+
+        public:
+        std::vector<Token> tokens;
+        Lexer(Source& source)
+        {
+            lexer_context = LexerContext(source);
         };
 
         Token get_next_token();
