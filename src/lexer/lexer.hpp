@@ -10,11 +10,14 @@ namespace Util {
 
     enum class ErrorCode {
         None,
-        UnexpectedCharacter
+        UnexpectedCharacter,
+        InvalidByte,
+        TruncatedSequence
     };
 
     enum class TokenType {
         Identifier,
+        UnicodeSequence,
         Numeric,
         SpecialChar,
         Whitespace,
@@ -26,13 +29,13 @@ namespace Util {
         public:
         size_t index;
         private:
-        size_t source_size;
-        char* source_buffer;
+        size_t source_size;       
+        unsigned char* source_buffer;
 
         public:
         
         Source() = default;
-        Source(char* source_buffer, size_t source_size) : source_buffer(source_buffer), source_size(source_size), index(0)
+        Source(unsigned char* source_buffer, size_t source_size) : source_buffer(source_buffer), source_size(source_size), index(0)
         {
             Assert(source_buffer,
                 LexerError 
@@ -63,7 +66,7 @@ namespace Util {
             index++;
         };
 
-        inline char see_current()
+        inline unsigned char see_current()
         {
             Assert(
                 can_consume_sentinel(),
@@ -88,7 +91,7 @@ namespace Util {
             return (index+peek_distance) < source_size;
         };
 
-        inline char peek(size_t peek_distance = 1)
+        inline unsigned char peek(size_t peek_distance = 1)
         {   
             Assert(
                 can_peek_sentinel(peek_distance),
@@ -98,7 +101,7 @@ namespace Util {
             );
             if (!can_peek())
             {
-                return '\0';
+                return (unsigned char)'\0';
             };
             return source_buffer[index+peek_distance];
         };
@@ -121,6 +124,8 @@ namespace Util {
         Source source;
         std::vector<Error> errors;
 
+        TokenType ultimate_token_type;
+
         LexerContext() = default;
         LexerContext(Source& source): source(source)
         {};
@@ -131,6 +136,9 @@ namespace Util {
             error.error_code = error_code;
             error.offset = source.index;
             errors.push_back(error);
+
+            source.consume();
+            ultimate_token_type = TokenType::Error;
         };
     };
 
@@ -138,13 +146,8 @@ namespace Util {
     {
         private:
         LexerContext lexer_context;
-        void emit_token(Token token)
-        {
-            tokens.push_back(token);
-        };
 
         public:
-        std::vector<Token> tokens;
         Lexer(Source& source)
         {
             lexer_context = LexerContext(source);
@@ -152,5 +155,4 @@ namespace Util {
 
         Token get_next_token();
     };
-}
-
+}   
