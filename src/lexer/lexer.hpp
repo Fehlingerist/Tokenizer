@@ -1,3 +1,5 @@
+#pragma once
+
 #include <DebuggerAssets/debugger/debugger.hpp>
 
 #include <cstdint>
@@ -7,7 +9,6 @@
 #define LexerErrorEnd "\n"
 
 namespace Util {
-
     enum class ErrorCode {
         None,
         UnexpectedCharacter,
@@ -23,6 +24,11 @@ namespace Util {
         Whitespace,
         EndOfFile,
         Error,  
+    };
+
+    struct SourceView {
+        unsigned char* source_buffer;
+        size_t source_size;
     };
 
     class Source {
@@ -42,6 +48,35 @@ namespace Util {
                 "Source buffer must exist" 
                 LexerErrorEnd
             );
+        };
+
+        Source slice(size_t start_index = 0,size_t length)
+        {
+            size_t end_index = start_index + length;
+            Assert(
+                end_index <= source_size,
+                LexerError
+                "broken assumption that end_index <= source_size is true"
+                LexerErrorEnd
+            )
+            return Source(source_buffer + start_index,length);
+        };
+
+        Source slice(size_t start_index = 0)
+        {
+            Assert(
+                source_size > start_index,
+                LexerError
+                "source_size > start_index is not true"
+                LexerErrorEnd
+            )
+
+            return slice(start_index,source_size-start_index);
+        };
+
+        inline unsigned char* get_source_buffer()
+        {
+            return source_buffer;
         };
 
         inline bool can_consume_sentinel()
@@ -107,6 +142,8 @@ namespace Util {
         };
     };
 
+    using Source = Util::Source;
+
     struct Token
     {
         TokenType token_type = TokenType::Error;
@@ -125,6 +162,7 @@ namespace Util {
         std::vector<Error> errors;
 
         TokenType ultimate_token_type;
+        TokenType original_token_type; //this variable is strictly for recover if user chooses to do so
 
         LexerContext() = default;
         LexerContext(Source& source): source(source)
@@ -137,7 +175,7 @@ namespace Util {
             error.offset = source.index;
             errors.push_back(error);
 
-            source.consume();
+            original_token_type = ultimate_token_type;
             ultimate_token_type = TokenType::Error;
         };
     };
@@ -148,6 +186,7 @@ namespace Util {
         LexerContext lexer_context;
 
         public:
+        Lexer() = default;
         Lexer(Source& source)
         {
             lexer_context = LexerContext(source);
@@ -156,3 +195,7 @@ namespace Util {
         Token get_next_token();
     };
 }   
+
+
+#undef LexerError
+#undef LexerErrorEnd
